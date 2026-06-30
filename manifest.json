@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "ASDA Protein Filter",
+  "version": "1.0.0",
+  "description": "On ASDA grocery search pages, hides products that provide less than 7 g of protein per 100 kcal.",
+  "content_scripts": [
+    {
+      "matches": ["https://www.asda.com/groceries/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": ["https://www.asda.com/*"],
+  "permissions": ["storage"]
+}
