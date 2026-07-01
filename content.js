@@ -5,8 +5,11 @@
  * density is below 7 g of protein per 100 kcal.
  *
  * How the data is obtained (verified against live ASDA responses):
- *   - The search grid renders one ".product-module" card per product. Each
- *     card contains <a href="/groceries/product/.../{CIN}"> where {CIN} is the
+ *   - The search grid renders one ".product-module" card per product. The
+ *     Regulars tab (favourites-lists/regulars) uses a different Chakra-based
+ *     grid instead, with each card a direct child of
+ *     [data-testid="regular-product-grid"]. Each card contains
+ *     <a href="/groceries/product/.../{CIN}"> where {CIN} is the
  *     product id.
  *   - The product page is a Mobify/Salesforce PWA. Its nutrition is server-side
  *     rendered into <script id="mobify-data"> as JSON at
@@ -29,7 +32,7 @@
   const THRESHOLD = 7;       // grams of protein per 100 kcal required to keep
   const UNKNOWN_TTL = 24 * 60 * 60 * 1000; // retry unreadable items after 1 day
   const CONCURRENCY = 3;     // simultaneous product-page fetches
-  const CARD = '.product-module';
+  const CARD = '.product-module, [data-testid="regular-product-grid"] > *';
   const LINK = 'a[href*="/groceries/product/"]';
   const STATE = 'data-apf';  // per-card marker: pending | pass | hide | unknown | skip
 
@@ -48,12 +51,14 @@
     return Number.isFinite(n) ? n : NaN;
   };
 
+  const KJ_PER_KCAL = 4.184; // standard food-label conversion, used when only kJ is listed
+
   // calculatedNutrition: [{ nameId, nameValue, per100, perServing }]
-  // 1183 = Energy (kcal), 1184 = Protein (g)
+  // 1182 = Energy (kJ), 1183 = Energy (kcal), 1184 = Protein (g)
   function fromCalculated(bb) {
     const arr = bb && bb.calculatedNutrition;
     if (!Array.isArray(arr)) return null;
-    let protein = NaN, kcal = NaN;
+    let protein = NaN, kcal = NaN, kj = NaN;
     for (const row of arr) {
       const id = row && row.nameId;
       const name = String((row && row.nameValue) || '').toLowerCase();
@@ -63,7 +68,11 @@
       if (id === '1183' || (/energy/.test(name) && /kcal/.test(name))) {
         const v = toNum(row.per100); if (Number.isFinite(v)) kcal = v;
       }
+      if (id === '1182' || (/energy/.test(name) && /\bkj\b/.test(name))) {
+        const v = toNum(row.per100); if (Number.isFinite(v)) kj = v;
+      }
     }
+    if (!Number.isFinite(kcal) && Number.isFinite(kj)) kcal = kj / KJ_PER_KCAL;
     return (Number.isFinite(protein) && Number.isFinite(kcal)) ? { protein, kcal } : null;
   }
 
@@ -71,17 +80,34 @@
   function fromTable(bb) {
     const arr = bb && bb.nutrition;
     if (!Array.isArray(arr)) return null;
-    const per100 = (row) => {
+    const per100Raw = (row) => {
       const headers = row.headers || [], values = row.values || [];
       let i = headers.findIndex((h) => /per\s*100\s*(g|ml)?\b/i.test(h) && !/%/.test(h));
       if (i < 0) i = headers.findIndex((h) => /per\s*100/i.test(h) && !/%/.test(h));
-      return i < 0 ? NaN : toNum(values[i]);
+      return i < 0 ? '' : String(values[i] == null ? '' : values[i]);
+    };
+    // Energy rows are sometimes split ("Energy (kcal)" with a plain number),
+    // sometimes combined ("Energy" with a "339 kJ / 80 kcal" value), and
+    // occasionally kJ-only ("Energy" with a "1588kJ" value and no kcal figure
+    // anywhere) — pull the kcal figure out of whichever form is present,
+    // converting from kJ as a last resort.
+    const per100Kcal = (row, raw) => {
+      const mKcal = raw.match(/([\d.]+)\s*kcal/i);
+      if (mKcal) return toNum(mKcal[1]);
+      if (/kcal/i.test(String(row.nutrient || ''))) return toNum(raw);
+      const mKj = raw.match(/([\d.]+)\s*kj/i);
+      if (mKj) return toNum(mKj[1]) / KJ_PER_KCAL;
+      if (/\bkj\b/i.test(String(row.nutrient || ''))) {
+        const v = toNum(raw); return Number.isFinite(v) ? v / KJ_PER_KCAL : NaN;
+      }
+      return NaN;
     };
     let protein = NaN, kcal = NaN;
     for (const row of arr) {
       const name = String(row.nutrient || '').toLowerCase();
-      if (/protein/.test(name)) { const v = per100(row); if (Number.isFinite(v)) protein = v; }
-      if (/energy/.test(name) && /kcal/.test(name)) { const v = per100(row); if (Number.isFinite(v)) kcal = v; }
+      const raw = per100Raw(row);
+      if (/protein/.test(name)) { const v = toNum(raw); if (Number.isFinite(v)) protein = v; }
+      if (/energy/.test(name)) { const v = per100Kcal(row, raw); if (Number.isFinite(v)) kcal = v; }
     }
     return (Number.isFinite(protein) && Number.isFinite(kcal)) ? { protein, kcal } : null;
   }
@@ -94,7 +120,7 @@
   function fromStructuredEU(bb) {
     const arr = bb && bb.structuredNutritionEU;
     if (!Array.isArray(arr)) return null;
-    let protein = NaN, kcal = NaN;
+    let protein = NaN, kcal = NaN, kj = NaN;
     for (const row of arr) {
       if (!row || !row.nutrientsId) continue;
       const name = String(row.nutrientsName || '').toLowerCase();
@@ -107,7 +133,11 @@
       if ((row.nutrientsId === '2452' || /\benergy\b/.test(name)) && unit === 'kcal') {
         if (Number.isNaN(kcal) || val > kcal) kcal = val;
       }
+      if ((row.nutrientsId === '2452' || /\benergy\b/.test(name)) && unit === 'kj') {
+        if (Number.isNaN(kj) || val > kj) kj = val;
+      }
     }
+    if (!Number.isFinite(kcal) && Number.isFinite(kj)) kcal = kj / KJ_PER_KCAL;
     return (Number.isFinite(protein) && Number.isFinite(kcal)) ? { protein, kcal } : null;
   }
 
