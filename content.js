@@ -299,7 +299,12 @@
   function scan() {
     if (!active) return;
     for (const card of document.querySelectorAll(CARD)) {
-      if (card.getAttribute(STATE)) continue; // already processed, pending or skipped
+      const state = card.getAttribute(STATE);
+      if (state && state !== 'skip') continue; // already processed or pending
+      // 'skip' is retried on every scan: some cards (e.g. recommendation
+      // carousels) mount their image before their product-name link, so a
+      // card can look unfilterable on one pass and gain a valid link moments
+      // later. Only cards that never get a link stay 'skip' indefinitely.
       const info = cardInfo(card);
       if (!info) { card.setAttribute(STATE, 'skip'); continue; } // not a filterable product (ad/banner)
       card.setAttribute(STATE, 'pending');
