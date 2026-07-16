@@ -423,11 +423,60 @@
     render();
   }
 
+  /* ------------------------------------------------------------ product page --- */
+
+  let productBadgeEl = null;
+  let productBadgeCin = null;
+
+  function productInfo() {
+    const seg = location.pathname.split('/').filter(Boolean).pop();
+    if (!/^\d+$/.test(seg || '')) return null;
+    return { cin: seg, href: location.href };
+  }
+
+  function setProductBadge(kind, text) {
+    if (!productBadgeEl) {
+      productBadgeEl = document.createElement('div');
+      productBadgeEl.id = 'apf-product-badge';
+      document.documentElement.appendChild(productBadgeEl);
+    }
+    productBadgeEl.className = 'apf-' + kind;
+    productBadgeEl.textContent = text;
+    productBadgeEl.style.display = '';
+  }
+
+  function hideProductBadge() {
+    if (productBadgeEl) productBadgeEl.style.display = 'none';
+  }
+
+  async function loadProductBadge(info) {
+    const r = await nutritionFor(info.cin, info.href);
+    if (productBadgeCin !== info.cin) return; // navigated away meanwhile
+    if (r.status === 'ok') {
+      setProductBadge('pass', r.ratio.toFixed(1) + ' g protein / 100 kcal');
+    } else if (r.status === 'throttled') {
+      setTimeout(() => { if (productBadgeCin === info.cin) loadProductBadge(info); }, 30000);
+    } else {
+      setProductBadge('unknown', 'Protein data unavailable');
+    }
+  }
+
+  function refreshProductBadge() {
+    const info = productInfo();
+    if (!info) { productBadgeCin = null; hideProductBadge(); return; }
+    if (productBadgeCin === info.cin) return; // already showing/loading this product
+    productBadgeCin = info.cin;
+    setProductBadge('unknown', 'Protein: checking…');
+    loadProductBadge(info);
+  }
+
   /* ------------------------------------------------------------ visibility --- */
 
   const onSearch = () =>
     /\/groceries\//.test(location.pathname) &&
     !/\/groceries\/product\//.test(location.pathname);
+
+  const onProduct = () => /\/groceries\/product\//.test(location.pathname);
 
   function syncVisibility() {
     if (!panel) return;
@@ -436,6 +485,12 @@
     } else {
       panel.style.display = 'none';
       if (active) deactivate();
+    }
+    if (onProduct()) {
+      refreshProductBadge();
+    } else {
+      productBadgeCin = null;
+      hideProductBadge();
     }
   }
 

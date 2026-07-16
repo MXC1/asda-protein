@@ -20,6 +20,21 @@
 .apf-pass { background: #128a3e; }   /* green: meets the protein bar */
 .apf-unknown { background: #8a8a8a; } /* grey: nutrition could not be read */
 
+/* Floating badge on individual product pages */
+#apf-product-badge {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
 /* Control panel */
 #apf-panel {
   position: fixed;

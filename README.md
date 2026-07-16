@@ -18,6 +18,11 @@ panel appears in the bottom-right corner. Click **Filter results** and the exten
 
 Click the button again (now **Reset (show all)**) to restore every card.
 
+On an individual **product page** (e.g. `https://www.asda.com/groceries/product/.../9369248`),
+a small floating badge in the bottom-right corner shows that product's protein density —
+e.g. `9.4 g protein / 100 kcal` (green), or a grey `Protein data unavailable` badge if it
+couldn't be read. This runs automatically, with no button to click.
+
 ## How the nutrition data is sourced
 
 This was reverse-engineered from ASDA's live responses:
