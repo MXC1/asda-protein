@@ -17,7 +17,7 @@
   pointer-events: none;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
-.apf-pass { background: #128a3e; }   /* green: meets the protein bar */
+.apf-pass { background: #128a3e; }   /* fallback; JS sets an inline red-to-green gradient by ratio */
 .apf-unknown { background: #8a8a8a; } /* grey: nutrition could not be read */
 
 /* Floating badge on individual product pages */

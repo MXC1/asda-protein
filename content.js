@@ -2,7 +2,7 @@
  * ASDA Protein Filter — content script
  * --------------------------------------------------------------------------
  * On ASDA grocery search and category pages, hides every product card whose protein
- * density is below 7 g of protein per 100 kcal.
+ * density is below THRESHOLD g of protein per 100 kcal.
  *
  * How the data is obtained (verified against live ASDA responses):
  *   - The search grid renders one ".product-module" card per product. The
@@ -19,9 +19,10 @@
  *
  * For each visible card we fetch its product page (same-origin), read the
  * nutrition, compute protein_per_100g / kcal_per_100g * 100 and:
- *   - >= 7  -> keep, badged with the value
- *   - <  7  -> hide
- *   - no readable nutrition -> keep, badged "protein ?"
+ *   - >= THRESHOLD -> keep, badged with the value on a red→amber→green gradient
+ *     (red at THRESHOLD, amber at GRADIENT_MID, green at GRADIENT_MAX and above)
+ *   - <  THRESHOLD -> hide
+ *   - no readable nutrition -> keep, badged "protein ?" in grey
  *
  * Filtering only runs when the user clicks the on-page button (manual trigger).
  */
@@ -29,7 +30,9 @@
   'use strict';
   if (window.top !== window.self) return; // ignore iframes
 
-  const THRESHOLD = 7;       // grams of protein per 100 kcal required to keep
+  const THRESHOLD = 5.4;     // grams of protein per 100 kcal required to keep
+  const GRADIENT_MID = 6.5;  // ratio at which the badge is fully amber
+  const GRADIENT_MAX = 7.6;  // ratio at (and above) which the badge is fully green
   const UNKNOWN_TTL = 24 * 60 * 60 * 1000; // retry unreadable items after 1 day
   const CONCURRENCY = 3;     // simultaneous product-page fetches
   const CARD = '.product-module, [data-testid="regular-product-grid"] > *';
@@ -256,7 +259,23 @@
     return { cin: seg, href: url.href };
   }
 
-  function setBadge(card, kind, text) {
+  // Red at THRESHOLD, amber at GRADIENT_MID, green at GRADIENT_MAX and above.
+  // Two straight RGB segments (red->amber, amber->green) rather than one
+  // red->green lerp, which would pass through a muddy olive at the midpoint.
+  const GRADIENT_RED = [200, 16, 46];    // #c8102e
+  const GRADIENT_AMBER = [180, 83, 9];   // #b45309
+  const GRADIENT_GREEN = [18, 138, 62];  // #128a3e
+  function colorForRatio(ratio) {
+    if (!Number.isFinite(ratio)) ratio = GRADIENT_MAX;
+    ratio = Math.max(THRESHOLD, Math.min(GRADIENT_MAX, ratio));
+    const [lo, hi, t] = ratio <= GRADIENT_MID
+      ? [GRADIENT_RED, GRADIENT_AMBER, (ratio - THRESHOLD) / (GRADIENT_MID - THRESHOLD)]
+      : [GRADIENT_AMBER, GRADIENT_GREEN, (ratio - GRADIENT_MID) / (GRADIENT_MAX - GRADIENT_MID)];
+    const [r, g, b] = lo.map((c, i) => Math.round(c + (hi[i] - c) * t));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function setBadge(card, kind, text, ratio) {
     let b = card.querySelector(':scope > .apf-badge');
     if (!b) {
       b = document.createElement('div');
@@ -265,6 +284,7 @@
       card.appendChild(b);
     }
     b.className = 'apf-badge apf-' + kind;
+    b.style.background = kind === 'pass' ? colorForRatio(ratio) : '';
     b.textContent = text;
   }
 
@@ -280,7 +300,7 @@
       clearBadge(card);
     } else if (state === 'pass') {
       card.classList.remove('apf-hidden');
-      setBadge(card, 'pass', ratio.toFixed(1) + ' g/100kcal');
+      setBadge(card, 'pass', ratio.toFixed(1) + ' g/100kcal', ratio);
     } else { // unknown
       card.classList.remove('apf-hidden');
       setBadge(card, 'unknown', 'protein ?');
@@ -434,13 +454,14 @@
     return { cin: seg, href: location.href };
   }
 
-  function setProductBadge(kind, text) {
+  function setProductBadge(kind, text, ratio) {
     if (!productBadgeEl) {
       productBadgeEl = document.createElement('div');
       productBadgeEl.id = 'apf-product-badge';
       document.documentElement.appendChild(productBadgeEl);
     }
     productBadgeEl.className = 'apf-' + kind;
+    productBadgeEl.style.background = kind === 'pass' ? colorForRatio(ratio) : '';
     productBadgeEl.textContent = text;
     productBadgeEl.style.display = '';
   }
@@ -453,7 +474,7 @@
     const r = await nutritionFor(info.cin, info.href);
     if (productBadgeCin !== info.cin) return; // navigated away meanwhile
     if (r.status === 'ok') {
-      setProductBadge('pass', r.ratio.toFixed(1) + ' g protein / 100 kcal');
+      setProductBadge('pass', r.ratio.toFixed(1) + ' g protein / 100 kcal', r.ratio);
     } else if (r.status === 'throttled') {
       setTimeout(() => { if (productBadgeCin === info.cin) loadProductBadge(info); }, 30000);
     } else {
