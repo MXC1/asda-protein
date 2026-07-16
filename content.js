@@ -22,7 +22,7 @@
  *   - >= THRESHOLD -> keep, badged with the value on a red→amber→green gradient
  *     (red at THRESHOLD, amber at GRADIENT_MID, green at GRADIENT_MAX and above)
  *   - <  THRESHOLD -> hide
- *   - no readable nutrition -> keep, badged "protein ?" in grey
+ *   - no readable nutrition -> hide (counted separately as "?" in the status panel)
  *
  * Filtering only runs when the user clicks the on-page button (manual trigger).
  */
@@ -295,15 +295,12 @@
 
   function apply(card, state, ratio) {
     card.setAttribute(STATE, state);
-    if (state === 'hide') {
-      card.classList.add('apf-hidden');
-      clearBadge(card);
-    } else if (state === 'pass') {
+    if (state === 'pass') {
       card.classList.remove('apf-hidden');
       setBadge(card, 'pass', ratio.toFixed(1) + ' g/100kcal', ratio);
-    } else { // unknown
-      card.classList.remove('apf-hidden');
-      setBadge(card, 'unknown', 'protein ?');
+    } else { // 'hide' or 'unknown' — both are hidden, kept distinct only for the status counts
+      card.classList.add('apf-hidden');
+      clearBadge(card);
     }
   }
 

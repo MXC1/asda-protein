@@ -15,7 +15,8 @@ panel appears in the bottom-right corner. Click **Filter results** and the exten
    - **≥ 5.4 g/100 kcal** → kept, badged with the value (e.g. `9.4 g/100kcal`) on a
      colour gradient from **red** at 5.4 g/100 kcal, through **amber** at 6.5, up to **green** at 7.6 g/100 kcal and above.
    - **< 5.4 g/100 kcal** → **hidden**.
-   - **nutrition can't be read** (non-food items, missing data) → kept, marked with a grey `protein ?` badge.
+   - **nutrition can't be read** (non-food items, missing data) → **hidden** too (counted
+     separately as "?" in the status panel, in case that count is unexpectedly high).
 
 Click the button again (now **Reset (show all)**) to restore every card.
 
