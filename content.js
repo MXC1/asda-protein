@@ -181,7 +181,11 @@
     URL.revokeObjectURL(url);
   }
 
-  async function nutritionFor(cin, href) {
+  // Cache/storage lookup only — no network. Kept outside the fetch
+  // concurrency pipeline so already-known results surface immediately
+  // instead of waiting in the CONCURRENCY-gated queue behind items that are
+  // currently being throttled.
+  async function lookupLocal(cin) {
     const lbl = '[APF ' + cin + ']';
     if (cache.has(cin)) {
       const v = cache.get(cin);
@@ -197,6 +201,13 @@
         return v;
       }
     } catch {}
+    return null;
+  }
+
+  async function nutritionFor(cin, href) {
+    const lbl = '[APF ' + cin + ']';
+    const local = await lookupLocal(cin);
+    if (local) return local;
 
     const backoff = [0, 2000, 6000];
     let result = { status: 'unknown' };
@@ -325,10 +336,31 @@
       const info = cardInfo(card);
       if (!info) { card.setAttribute(STATE, 'skip'); continue; } // not a filterable product (ad/banner)
       card.setAttribute(STATE, 'pending');
-      queue.push({ card, cin: info.cin, href: info.href });
+      enqueue({ card, cin: info.cin, href: info.href });
     }
-    pump();
     render();
+  }
+
+  // Resolves a job against the local cache/storage first, unconstrained by
+  // CONCURRENCY, so cards with an already-known result get shown/hidden
+  // immediately instead of sitting behind throttled fetches for other cards.
+  // Only cards that actually miss the cache join the fetch-gated queue.
+  function enqueue(job) {
+    lookupLocal(job.cin).then((local) => {
+      if (!active || !document.body.contains(job.card)) return;
+      if (local) {
+        if (local.status === 'ok') {
+          apply(job.card, local.ratio >= THRESHOLD - 1e-9 ? 'pass' : 'hide', local.ratio);
+        } else {
+          apply(job.card, 'unknown', 0);
+        }
+        render();
+        return;
+      }
+      queue.push(job);
+      pump();
+      render();
+    });
   }
 
   function pump() {
