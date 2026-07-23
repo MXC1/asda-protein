@@ -50,7 +50,8 @@
   /* ----------------------------------------------------------- nutrition --- */
 
   const toNum = (x) => {
-    const n = parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g, ''));
+    const s = String(x == null ? '' : x).replace(',', '.');
+    const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
     return Number.isFinite(n) ? n : NaN;
   };
 
