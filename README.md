@@ -26,6 +26,14 @@ e.g. `9.4 g protein / 100 kcal`, coloured on the same red-to-green gradient, or 
 `Protein data unavailable` badge if it couldn't be read. This runs automatically, with no
 button to click.
 
+On the **trolley page** (`https://www.asda.com/groceries/trolley`), a **Trolley protein**
+panel appears with a **Calculate average** button. Clicking it fetches the nutrition for
+every distinct product in your trolley and reports the quantity-weighted average protein
+density across the whole basket, e.g. `6.8 g protein / 100 kcal avg over 53 items`, coloured
+on the same gradient. Items whose nutrition can't be read are counted separately (e.g.
+`2 unreadable`) and excluded from the average. Click **Recalculate** after changing
+quantities or contents.
+
 ## How the nutrition data is sourced
 
 This was reverse-engineered from ASDA's live responses:

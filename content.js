@@ -25,6 +25,14 @@
  *   - no readable nutrition -> hide (counted separately as "?" in the status panel)
  *
  * Filtering only runs when the user clicks the on-page button (manual trigger).
+ *
+ * On the trolley page (/groceries/trolley), a separate panel computes the
+ * basket's quantity-weighted average protein density instead of filtering.
+ * Each line item is rendered three times (once per responsive breakpoint,
+ * only one visible at a time), so rows are found by climbing from each
+ * product link to its nearest ancestor holding a quantity stepper
+ * ([data-testid="update-plus-btn"]) and keeping only the one with a non-null
+ * offsetParent.
  */
 (() => {
   'use strict';
@@ -523,9 +531,12 @@
 
   /* ------------------------------------------------------------ visibility --- */
 
+  const onTrolley = () => /\/groceries\/trolley(\/|$|\?)/.test(location.pathname);
+
   const onSearch = () =>
     /\/groceries\//.test(location.pathname) &&
-    !/\/groceries\/product\//.test(location.pathname);
+    !/\/groceries\/product\//.test(location.pathname) &&
+    !onTrolley();
 
   const onProduct = () => /\/groceries\/product\//.test(location.pathname);
 
@@ -543,6 +554,116 @@
       productBadgeCin = null;
       hideProductBadge();
     }
+    if (trolleyPanel) {
+      trolleyPanel.style.display = onTrolley() ? '' : 'none';
+    }
+  }
+
+  /* -------------------------------------------------------------- trolley --- */
+
+  // The trolley page renders each line item three times (once per responsive
+  // layout breakpoint) with only one copy actually visible at a time, so a
+  // plain querySelectorAll would triple- (or more) count products. Climbing
+  // from each product link to its nearest ancestor that owns a quantity
+  // stepper gives the per-item row; filtering to offsetParent !== null keeps
+  // only the currently-rendered copy of each row.
+  function trolleyRows() {
+    const seen = new Set();
+    const rows = [];
+    document.querySelectorAll('a[href*="/groceries/product/"]').forEach((a) => {
+      let url;
+      try { url = new URL(a.getAttribute('href'), location.origin); } catch { return; }
+      const seg = url.pathname.split('/').filter(Boolean).pop();
+      if (!/^\d+$/.test(seg || '')) return;
+      let row = a.parentElement, depth = 0;
+      while (row && depth < 6 && !row.querySelector('[data-testid="update-plus-btn"]')) {
+        row = row.parentElement;
+        depth++;
+      }
+      if (!row || row.offsetParent === null || seen.has(row)) return;
+      seen.add(row);
+      const qtyInput = row.querySelector('input[type="number"]');
+      const qty = qtyInput ? parseInt(qtyInput.value, 10) : 1;
+      rows.push({ cin: seg, href: url.href, qty: Number.isFinite(qty) && qty > 0 ? qty : 1 });
+    });
+    return rows;
+  }
+
+  async function nutritionForWithRetry(cin, href) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const r = await nutritionFor(cin, href);
+      if (r.status !== 'throttled') return r;
+      await new Promise((res) => setTimeout(res, 30000));
+    }
+    return { status: 'unknown' };
+  }
+
+  let trolleyPanel, trolleyBtn, trolleyStatusEl;
+  let trolleyRunning = false;
+
+  async function runTrolleyAverage() {
+    if (trolleyRunning) return;
+    trolleyRunning = true;
+    trolleyBtn.disabled = true;
+    trolleyStatusEl.textContent = '';
+    trolleyStatusEl.style.background = '';
+    trolleyStatusEl.style.color = '';
+
+    const rows = trolleyRows();
+    if (!rows.length) {
+      trolleyBtn.textContent = 'Calculate average';
+      trolleyBtn.disabled = false;
+      trolleyStatusEl.textContent = 'No products found in trolley.';
+      trolleyRunning = false;
+      return;
+    }
+
+    let done = 0, weightedSum = 0, totalQty = 0, unreadable = 0;
+    let idx = 0;
+    trolleyBtn.textContent = 'Calculating… 0/' + rows.length;
+
+    async function worker() {
+      while (idx < rows.length) {
+        const row = rows[idx++];
+        const r = await nutritionForWithRetry(row.cin, row.href);
+        if (r.status === 'ok') {
+          weightedSum += r.ratio * row.qty;
+          totalQty += row.qty;
+        } else {
+          unreadable++;
+        }
+        done++;
+        trolleyBtn.textContent = 'Calculating… ' + done + '/' + rows.length;
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker));
+
+    trolleyBtn.textContent = 'Recalculate';
+    trolleyBtn.disabled = false;
+    trolleyRunning = false;
+
+    if (totalQty > 0) {
+      const avg = weightedSum / totalQty;
+      trolleyStatusEl.textContent = avg.toFixed(1) + ' g protein / 100 kcal avg over ' + totalQty + ' item' + (totalQty === 1 ? '' : 's');
+      trolleyStatusEl.style.background = colorForRatio(avg);
+      trolleyStatusEl.style.color = '#fff';
+      if (unreadable) trolleyStatusEl.textContent += ' · ' + unreadable + ' unreadable';
+    } else {
+      trolleyStatusEl.textContent = 'Could not read nutrition for any item.';
+    }
+  }
+
+  function buildTrolleyPanel() {
+    trolleyPanel = document.createElement('div');
+    trolleyPanel.id = 'apf-trolley-panel';
+    trolleyPanel.innerHTML =
+      '<div id="apf-trolley-title">Trolley protein</div>' +
+      '<button id="apf-trolley-btn" type="button">Calculate average</button>' +
+      '<div id="apf-trolley-status"></div>';
+    document.documentElement.appendChild(trolleyPanel);
+    trolleyBtn = trolleyPanel.querySelector('#apf-trolley-btn');
+    trolleyStatusEl = trolleyPanel.querySelector('#apf-trolley-status');
+    trolleyBtn.addEventListener('click', runTrolleyAverage);
   }
 
   /* ------------------------------------------------------------------ init --- */
@@ -550,6 +671,7 @@
   function init() {
     if (document.getElementById('apf-panel')) return;
     buildPanel();
+    buildTrolleyPanel();
     syncVisibility();
     // The site is a single-page app; watch for client-side navigations so the
     // panel only shows on search pages.

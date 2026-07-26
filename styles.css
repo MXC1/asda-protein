@@ -92,3 +92,46 @@
   cursor: pointer;
 }
 #apf-save:hover { background: #e8e8e8; }
+
+/* Trolley average panel */
+#apf-trolley-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  width: 212px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a1a1a;
+}
+#apf-trolley-title {
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+#apf-trolley-btn {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #68a51c;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#apf-trolley-btn:hover { filter: brightness(0.95); }
+#apf-trolley-btn:disabled { cursor: default; filter: brightness(0.95); }
+#apf-trolley-status {
+  margin-top: 8px;
+  min-height: 16px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+}
