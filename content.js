@@ -27,7 +27,13 @@
  * Filtering only runs when the user clicks the on-page button (manual trigger).
  *
  * On the trolley page (/groceries/trolley), a separate panel computes the
- * basket's quantity-weighted average protein density instead of filtering.
+ * protein density of the trolley as a whole meal instead of filtering: total
+ * protein across every line item (scaled by that product's pack weight and
+ * quantity) divided by total kcal, i.e. "if I ate this whole trolley, what's
+ * the protein per 100 kcal?". Pack weight is recovered per item from whichever
+ * of three signals is available (unit price, size label, or per-serving
+ * nutrition x unit count — see extractNutrition), falling back to an assumed
+ * 100g only when none of them apply.
  * Each line item is rendered three times (once per responsive breakpoint,
  * only one visible at a time), so rows are found by climbing from each
  * product link to its nearest ancestor holding a quantity stepper
@@ -70,7 +76,7 @@
   function fromCalculated(bb) {
     const arr = bb && bb.calculatedNutrition;
     if (!Array.isArray(arr)) return null;
-    let protein = NaN, kcal = NaN, kj = NaN;
+    let protein = NaN, kcal = NaN, kj = NaN, kcalServing = NaN, kjServing = NaN;
     for (const row of arr) {
       const id = row && row.nameId;
       const name = String((row && row.nameValue) || '').toLowerCase();
@@ -79,13 +85,16 @@
       }
       if (id === '1183' || (/energy/.test(name) && /kcal/.test(name))) {
         const v = toNum(row.per100); if (Number.isFinite(v)) kcal = v;
+        const vs = toNum(row.perServing); if (Number.isFinite(vs)) kcalServing = vs;
       }
       if (id === '1182' || (/energy/.test(name) && /\bkj\b/.test(name))) {
         const v = toNum(row.per100); if (Number.isFinite(v)) kj = v;
+        const vs = toNum(row.perServing); if (Number.isFinite(vs)) kjServing = vs;
       }
     }
     if (!Number.isFinite(kcal) && Number.isFinite(kj)) kcal = kj / KJ_PER_KCAL;
-    return (Number.isFinite(protein) && Number.isFinite(kcal)) ? { protein, kcal } : null;
+    if (!Number.isFinite(kcalServing) && Number.isFinite(kjServing)) kcalServing = kjServing / KJ_PER_KCAL;
+    return (Number.isFinite(protein) && Number.isFinite(kcal)) ? { protein, kcal, kcalServing } : null;
   }
 
   // raw nutrition: [{ nutrient, headers:[...], values:[...] }]
@@ -153,6 +162,56 @@
     return (Number.isFinite(protein) && Number.isFinite(kcal)) ? { protein, kcal } : null;
   }
 
+  // Three ways to recover a pack's total weight in grams, tried in order of
+  // reliability (verified against live ASDA product pages):
+  //
+  // 1. ASDA's own per-kg/per-litre unit price ("£7.63/kg" + price £2.44 -> 320g).
+  //    Clean structured numbers, so it's preferred whenever the item is actually
+  //    priced by weight/volume (c_price_comp_uom_cd KG or LT).
+  // 2. The c_SIZE label itself ("320G", "8X115G", "330ml", "1.13KG"). Needed when
+  //    an item is priced "each" but its label still states a real weight.
+  // 3. Per-serving kcal vs per-100g kcal backs out one serving's weight, multiplied
+  //    by "Number of Units" (servings per pack). Last resort for each-priced
+  //    multipacks with no weight anywhere else (e.g. "6 iced buns", 27.3p/ea,
+  //    c_SIZE "6PK") that still carry real nutrition — confirmed against a live
+  //    example where this recovers ~241g (40g/bun x 6) with no other signal available.
+  //
+  // Genuine count-only items with no weight-bearing price, label, or serving data
+  // (e.g. eggs) return null from all three; in practice those also tend to lack a
+  // nutrition panel entirely, so they're already excluded upstream as unreadable.
+
+  // Treats ml as 1:1 with g — fine for the water-based drinks/liquids this matters for.
+  function parsePackGramsFromLabel(size) {
+    const m = String(size || '').trim().match(/^(?:(\d+(?:\.\d+)?)\s*x\s*)?(\d+(?:\.\d+)?)\s*(kg|g|l|ml)$/i);
+    if (!m) return null;
+    const count = m[1] ? parseFloat(m[1]) : 1;
+    const each = parseFloat(m[2]);
+    const unit = m[3].toLowerCase();
+    const perUnitGrams = (unit === 'kg' || unit === 'l') ? each * 1000 : each;
+    return count * perUnitGrams;
+  }
+
+  function parsePackGramsFromPrice(product) {
+    const uom = String(product.c_price_comp_uom_cd || '').toUpperCase();
+    if (uom !== 'KG' && uom !== 'LT') return null; // "EA" etc. isn't a weight/volume basis
+    const compQty = parseFloat(product.c_price_comp_qty);
+    const price = parseFloat(product.price);
+    const m = String(product.c_pricePerUOM || '').match(/£\s*([\d.]+)|([\d.]+)\s*p\b/i);
+    if (!m || !Number.isFinite(compQty) || compQty <= 0 || !Number.isFinite(price)) return null;
+    const perUnitPrice = m[1] != null ? parseFloat(m[1]) : parseFloat(m[2]) / 100;
+    if (!Number.isFinite(perUnitPrice) || perUnitPrice <= 0) return null;
+    return (price / perUnitPrice) * compQty * 1000;
+  }
+
+  function parsePackGramsFromServing(n, bb) {
+    if (!Number.isFinite(n.kcalServing) || !(n.kcal > 0)) return null;
+    const units = bb && Array.isArray(bb.numberOfUnits) && bb.numberOfUnits[0];
+    const count = units && parseInt(units.text, 10);
+    if (!Number.isFinite(count) || count <= 0) return null;
+    const servingGrams = (n.kcalServing / n.kcal) * 100;
+    return servingGrams * count;
+  }
+
   function extractNutrition(html) {
     let doc;
     try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch { return null; }
@@ -166,7 +225,12 @@
       && data.__PRELOADED_STATE__.pageProps.pageData.initialProduct;
     if (!product || !product.c_BRANDBANK_JSON) return null;
     let bb; try { bb = JSON.parse(product.c_BRANDBANK_JSON); } catch { return null; }
-    return fromCalculated(bb) || fromTable(bb) || fromStructuredEU(bb);
+    const n = fromCalculated(bb) || fromTable(bb) || fromStructuredEU(bb);
+    if (!n) return null;
+    const grams = parsePackGramsFromPrice(product)
+      ?? parsePackGramsFromLabel(product.c_SIZE)
+      ?? parsePackGramsFromServing(n, bb);
+    return { ...n, grams };
   }
 
   /* ------------------------------------------------------------- fetching --- */
@@ -204,7 +268,11 @@
     try {
       const stored = await chrome.storage.local.get('apf:' + cin);
       const v = stored['apf:' + cin];
-      if (v && (v.status === 'ok' || (v.ts && Date.now() - v.ts < UNKNOWN_TTL))) {
+      // 'ok' entries cached before pack weight (grams) was tracked lack that field;
+      // treat them as a miss so they refetch and pick it up, instead of silently
+      // falling back to an assumed weight in the trolley total forever.
+      const stale = v && v.status === 'ok' && !('grams' in v);
+      if (v && !stale && (v.status === 'ok' || (v.ts && Date.now() - v.ts < UNKNOWN_TTL))) {
         logEntry('info', lbl, '(stored)', v.status === 'ok' ? v.ratio.toFixed(1) + ' g/100kcal' : 'no readable nutrition');
         cache.set(cin, v);
         return v;
@@ -251,7 +319,7 @@
       if (n && n.kcal > 0 && Number.isFinite(n.protein)) {
         const ratio = (n.protein / n.kcal) * 100;
         logEntry('info', lbl, ratio.toFixed(1) + ' g/100kcal');
-        result = { status: 'ok', protein: n.protein, kcal: n.kcal, ratio };
+        result = { status: 'ok', protein: n.protein, kcal: n.kcal, ratio, grams: n.grams };
       } else {
         logEntry('info', lbl, 'no readable nutrition');
       }
@@ -618,7 +686,14 @@
       return;
     }
 
-    let done = 0, weightedSum = 0, totalQty = 0, unreadable = 0;
+    // "If I ate the whole trolley" means summing actual protein and kcal per line
+    // item (per-100g figure scaled up by that product's pack weight and quantity),
+    // not just averaging each item's ratio. Pack weight (r.grams) is resolved by
+    // extractNutrition from unit price, size label, or per-serving nutrition — see
+    // its comment. Only items where none of those apply fall back to an assumed
+    // 100g so they still contribute something, flagged via sizeUnknown below.
+    const ASSUMED_GRAMS = 100;
+    let done = 0, totalProtein = 0, totalKcal = 0, totalQty = 0, unreadable = 0, sizeUnknown = 0;
     let idx = 0;
     trolleyBtn.textContent = 'Calculating… 0/' + rows.length;
 
@@ -627,7 +702,11 @@
         const row = rows[idx++];
         const r = await nutritionForWithRetry(row.cin, row.href);
         if (r.status === 'ok') {
-          weightedSum += r.ratio * row.qty;
+          const knownGrams = Number.isFinite(r.grams) && r.grams > 0;
+          const grams = knownGrams ? r.grams : ASSUMED_GRAMS;
+          if (!knownGrams) sizeUnknown += row.qty;
+          totalProtein += r.protein * (grams / 100) * row.qty;
+          totalKcal += r.kcal * (grams / 100) * row.qty;
           totalQty += row.qty;
         } else {
           unreadable++;
@@ -642,12 +721,14 @@
     trolleyBtn.disabled = false;
     trolleyRunning = false;
 
-    if (totalQty > 0) {
-      const avg = weightedSum / totalQty;
-      trolleyStatusEl.textContent = avg.toFixed(1) + ' g protein / 100 kcal avg over ' + totalQty + ' item' + (totalQty === 1 ? '' : 's');
+    if (totalKcal > 0) {
+      const avg = (totalProtein / totalKcal) * 100;
+      trolleyStatusEl.textContent = avg.toFixed(1) + ' g protein / 100 kcal for the whole trolley ('
+        + Math.round(totalKcal) + ' kcal, ' + Math.round(totalProtein) + ' g protein, ' + totalQty + ' item' + (totalQty === 1 ? '' : 's') + ')';
       trolleyStatusEl.style.background = colorForRatio(avg);
       trolleyStatusEl.style.color = '#fff';
       if (unreadable) trolleyStatusEl.textContent += ' · ' + unreadable + ' unreadable';
+      if (sizeUnknown) trolleyStatusEl.textContent += ' · ' + sizeUnknown + ' item' + (sizeUnknown === 1 ? '' : 's') + ' size unknown (assumed 100g)';
     } else {
       trolleyStatusEl.textContent = 'Could not read nutrition for any item.';
     }
