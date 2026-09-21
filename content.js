@@ -2,7 +2,8 @@
  * ASDA Protein Filter — content script
  * --------------------------------------------------------------------------
  * On ASDA grocery search and category pages, hides every product card whose protein
- * density is below THRESHOLD g of protein per 100 kcal.
+ * density falls outside a chosen range of g of protein per 100 kcal (default:
+ * below THRESHOLD).
  *
  * How the data is obtained (verified against live ASDA responses):
  *   - The search grid renders one ".product-module" card per product. The
@@ -19,10 +20,13 @@
  *
  * For each visible card we fetch its product page (same-origin), read the
  * nutrition, compute protein_per_100g / kcal_per_100g * 100 and:
- *   - >= THRESHOLD -> keep, badged with the value on a red→amber→green gradient
- *     (red at THRESHOLD, amber at GRADIENT_MID, green at GRADIENT_MAX and above)
- *   - <  THRESHOLD -> hide
+ *   - inside the panel's range slider -> keep, badged with the value on a
+ *     red→amber→green gradient (red at THRESHOLD, amber at GRADIENT_MID, green
+ *     at GRADIENT_MAX and above)
+ *   - outside it -> hide
  *   - no readable nutrition -> hide (counted separately as "?" in the status panel)
+ * The slider defaults to THRESHOLD..∞ (rangeMin/rangeMax) and re-filters
+ * already-fetched cards live from the in-memory cache as it moves.
  *
  * Filtering only runs when the user clicks the on-page button (manual trigger).
  *
@@ -44,7 +48,9 @@
   'use strict';
   if (window.top !== window.self) return; // ignore iframes
 
-  const THRESHOLD = 5.4;     // grams of protein per 100 kcal required to keep
+  const THRESHOLD = 5.4;     // default lower bound (g protein per 100 kcal); also the red end of the badge gradient
+  const SLIDER_MAX = 20;     // top of the slider's scale — the top stop means "no upper limit" (∞)
+  const SLIDER_STEP = 0.1;
   const GRADIENT_MID = 6.5;  // ratio at which the badge is fully amber
   const GRADIENT_MAX = 7.6;  // ratio at (and above) which the badge is fully green
   const UNKNOWN_TTL = 24 * 60 * 60 * 1000; // retry unreadable items after 1 day
@@ -54,6 +60,8 @@
   const STATE = 'data-apf';  // per-card marker: pending | pass | hide | unknown | skip
 
   let active = false;
+  let rangeMin = THRESHOLD;  // current slider range; ratios outside it are hidden
+  let rangeMax = Infinity;
   let observer = null;
   let scanTimer = null;
   let running = 0;
@@ -399,6 +407,25 @@
     clearBadge(card);
   }
 
+  function stateFor(ratio) {
+    return ratio >= rangeMin - 1e-9 && ratio <= rangeMax + 1e-9 ? 'pass' : 'hide';
+  }
+
+  // Re-judges every already-resolved card against the current range straight
+  // from the in-memory cache (no network). Unreadable cards stay hidden, and
+  // pending ones pick the range up whenever their result arrives.
+  function reapplyRange() {
+    if (!active) return;
+    for (const card of document.querySelectorAll(CARD)) {
+      const state = card.getAttribute(STATE);
+      if (state !== 'pass' && state !== 'hide') continue;
+      const info = cardInfo(card);
+      const r = info && cache.get(info.cin);
+      if (r && r.status === 'ok') apply(card, stateFor(r.ratio), r.ratio);
+    }
+    render();
+  }
+
   /* -------------------------------------------------------------- pipeline --- */
 
   function scan() {
@@ -427,7 +454,7 @@
       if (!active || !document.body.contains(job.card)) return;
       if (local) {
         if (local.status === 'ok') {
-          apply(job.card, local.ratio >= THRESHOLD - 1e-9 ? 'pass' : 'hide', local.ratio);
+          apply(job.card, stateFor(local.ratio), local.ratio);
         } else {
           apply(job.card, 'unknown', 0);
         }
@@ -463,7 +490,7 @@
       return; // card stays 'pending' — no badge applied
     }
     if (r.status === 'ok') {
-      apply(job.card, r.ratio >= THRESHOLD - 1e-9 ? 'pass' : 'hide', r.ratio);
+      apply(job.card, stateFor(r.ratio), r.ratio);
     } else {
       apply(job.card, 'unknown', 0);
     }
@@ -476,7 +503,7 @@
 
   /* ----------------------------------------------------------------- panel --- */
 
-  let panel, btn, statusEl;
+  let panel, btn, statusEl, sliderEl, thumbA, thumbB, rangeLabelEl, sliderResetBtn;
 
   function counts() {
     let shown = 0, hidden = 0, unknown = 0, pending = 0;
@@ -507,20 +534,60 @@
     }
   }
 
+  // The slider is two overlaid native range inputs sharing one track. Neither
+  // is "the" lower or upper handle: the range is whichever is smaller/larger,
+  // so the handles can cross or sit on top of each other without either one
+  // ever becoming unreachable. Parking a handle on SLIDER_MAX means ∞.
+  function syncRange() {
+    const a = Number(thumbA.value), b = Number(thumbB.value);
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    rangeMin = lo;
+    rangeMax = hi >= SLIDER_MAX ? Infinity : hi;
+    sliderEl.style.setProperty('--lo', lo / SLIDER_MAX);
+    sliderEl.style.setProperty('--hi', hi / SLIDER_MAX);
+    rangeLabelEl.textContent = rangeMin + ' – ' + (rangeMax === Infinity ? '∞' : rangeMax) + ' g/100 kcal';
+    sliderResetBtn.disabled = rangeMin === THRESHOLD && rangeMax === Infinity;
+    reapplyRange();
+  }
+
   function buildPanel() {
+    const thumb = '" type="range" min="0" max="' + SLIDER_MAX + '" step="' + SLIDER_STEP +
+      '" aria-label="Protein per 100 kcal range handle">';
     panel = document.createElement('div');
     panel.id = 'apf-panel';
     panel.innerHTML =
       '<div id="apf-title">Protein filter</div>' +
       '<button id="apf-btn" type="button"></button>' +
       '<div id="apf-status"></div>' +
-      '<div id="apf-hint">Keeps items with ≥ ' + THRESHOLD + ' g protein per 100 kcal</div>' +
+      '<div id="apf-range-label"></div>' +
+      '<div id="apf-slider">' +
+        '<div id="apf-slider-track"></div>' +
+        '<div id="apf-slider-fill"></div>' +
+        '<input id="apf-thumb-a' + thumb +
+        '<input id="apf-thumb-b' + thumb +
+      '</div>' +
+      '<div id="apf-slider-ends"><span>0</span><span>∞</span></div>' +
+      '<button id="apf-slider-reset" type="button">Reset slider</button>' +
       '<button id="apf-save" type="button">Save logs</button>';
     document.documentElement.appendChild(panel);
     btn = panel.querySelector('#apf-btn');
     statusEl = panel.querySelector('#apf-status');
+    sliderEl = panel.querySelector('#apf-slider');
+    thumbA = panel.querySelector('#apf-thumb-a');
+    thumbB = panel.querySelector('#apf-thumb-b');
+    rangeLabelEl = panel.querySelector('#apf-range-label');
+    sliderResetBtn = panel.querySelector('#apf-slider-reset');
     btn.addEventListener('click', () => (active ? deactivate() : activate()));
     panel.querySelector('#apf-save').addEventListener('click', saveLogs);
+    for (const t of [thumbA, thumbB]) t.addEventListener('input', syncRange);
+    sliderResetBtn.addEventListener('click', () => {
+      thumbA.value = THRESHOLD;
+      thumbB.value = SLIDER_MAX;
+      syncRange();
+    });
+    thumbA.value = THRESHOLD;
+    thumbB.value = SLIDER_MAX;
+    syncRange();
     render();
   }
 

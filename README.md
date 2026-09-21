@@ -12,13 +12,30 @@ panel appears in the bottom-right corner. Click **Filter results** and the exten
 2. Fetches each product's own page (same origin) and reads its nutrition.
 3. Computes `protein_per_100g ÷ energy_kcal_per_100g × 100` (= grams of protein per 100 kcal).
 4. Then, per the configured behaviour:
-   - **≥ 5.4 g/100 kcal** → kept, badged with the value (e.g. `9.4 g/100kcal`) on a
-     colour gradient from **red** at 5.4 g/100 kcal, through **amber** at 6.5, up to **green** at 7.6 g/100 kcal and above.
-   - **< 5.4 g/100 kcal** → **hidden**.
+   - **inside the slider's range** (default **5.4 – ∞ g/100 kcal**) → kept, badged with the value
+     (e.g. `9.4 g/100kcal`) on a colour gradient from **red** at 5.4 g/100 kcal, through
+     **amber** at 6.5, up to **green** at 7.6 g/100 kcal and above.
+   - **outside the range** → **hidden**.
    - **nutrition can't be read** (non-food items, missing data) → **hidden** too (counted
      separately as "?" in the status panel, in case that count is unexpectedly high).
 
 Click the button again (now **Reset (show all)**) to restore every card.
+
+### Range slider
+
+The panel has a two-handle slider for the protein range, from **0** to **∞** (g protein per
+100 kcal). Drag the handles (or focus one and use the arrow keys) and the current range is
+shown above the slider, e.g. `5.4 – ∞ g/100 kcal`. The slider scale runs 0–20 in steps of 0.1;
+parking a handle at the far right means **∞** (no upper limit).
+
+- While the filter is active, moving a handle re-filters the cards already loaded instantly —
+  nothing is re-fetched.
+- Either handle can be the lower or the upper one; the range is simply the smaller and larger
+  of the two, so they can be dragged past each other or stacked.
+- **Reset slider** puts it back to the default range (5.4 – ∞). It is greyed out when the
+  slider is already there.
+- The range applies to the next run too, and to cards that load in later, but is not saved
+  across page reloads.
 
 On an individual **product page** (e.g. `https://www.asda.com/groceries/product/.../9369248`),
 a small floating badge in the bottom-right corner shows that product's protein density —
@@ -87,9 +104,11 @@ No toolbar icon is bundled, so Chrome shows the default puzzle-piece icon — th
 - **Badges on kept items** show the computed density, coloured on a red-to-green gradient. If
   you'd prefer no badge on passing items, remove the `setBadge(...)` call in the `pass` branch
   of `apply()` in `content.js`.
-- **Threshold** is the `THRESHOLD` constant at the top of `content.js` (default `5.4`). The
-  gradient's amber midpoint and green end are the separate `GRADIENT_MID` (default `6.5`) and
-  `GRADIENT_MAX` (default `7.6`) constants.
+- **Default range** starts at the `THRESHOLD` constant at the top of `content.js` (default
+  `5.4`), which is also the red end of the badge gradient — the gradient stays put however the
+  slider is set. The gradient's amber midpoint and green end are the separate `GRADIENT_MID`
+  (default `6.5`) and `GRADIENT_MAX` (default `7.6`) constants. The slider's scale is
+  `SLIDER_MAX` (default `20`, the ∞ stop) and `SLIDER_STEP` (default `0.1`).
 - Filtering runs over every `.product-module` on the page, which includes sponsored results
   and any "you might also like" carousels.
 - Selectors and the embedded-state path reflect ASDA's site as of mid-2026; if ASDA changes

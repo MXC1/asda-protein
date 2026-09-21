@@ -74,11 +74,85 @@
   font-size: 12px;
   color: #333;
 }
-#apf-hint {
+#apf-range-label {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+  white-space: nowrap; /* keep one line so the panel doesn't jump while dragging */
+}
+
+/* Dual-handle range slider: two transparent native range inputs stacked on one
+   custom track. Only the thumbs take pointer events, so both stay draggable.
+   --lo / --hi (0..1) are set from JS and position the highlighted fill; the
+   8px offsets are half the 16px thumb width, since a native thumb's centre
+   travels from 8px in to 8px short of the far end. */
+#apf-slider {
+  position: relative;
+  height: 20px;
   margin-top: 6px;
+}
+#apf-slider-track,
+#apf-slider-fill {
+  position: absolute;
+  top: 8px;
+  height: 4px;
+  border-radius: 2px;
+}
+#apf-slider-track {
+  left: 8px;
+  right: 8px;
+  background: #d9d9d9;
+}
+#apf-slider-fill {
+  left: calc(8px + (100% - 16px) * var(--lo, 0));
+  right: calc(8px + (100% - 16px) * (1 - var(--hi, 1)));
+  background: #68a51c;
+}
+#apf-slider input[type="range"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#apf-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 20px;
+  background: transparent;
+  -webkit-appearance: none;
+}
+#apf-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid #68a51c;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  pointer-events: auto;
+}
+#apf-slider input[type="range"]:focus-visible { outline: none; }
+#apf-slider input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(104, 165, 28, 0.4);
+}
+#apf-slider-ends {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
   font-size: 10px;
   color: #888;
 }
+#apf-slider-reset,
 #apf-save {
   width: 100%;
   margin-top: 6px;
@@ -91,7 +165,9 @@
   font-weight: 600;
   cursor: pointer;
 }
+#apf-slider-reset:hover:not(:disabled),
 #apf-save:hover { background: #e8e8e8; }
+#apf-slider-reset:disabled { opacity: 0.5; cursor: default; }
 
 /* Trolley average panel */
 #apf-trolley-panel {
